@@ -27,6 +27,12 @@ file(GLOB_RECURSE QUARKML_SOURCES
 # Build static library
 add_library(QuarkML STATIC ${QUARKML_SOURCES})
 
-# Example: linear_regression_basic
-add_executable(example_linear examples/linear_regression_basic.cpp)
-target_link_libraries(example_linear PRIVATE QuarkML)
+target_include_directories(QuarkML PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
+# Example: linear_regression_basic  
+#add_executable(example_linear examples/linear_regression_basic.cpp)
+#target_link_libraries(example_linear PRIVATE QuarkML)
+
+# Example: linear_regression_ridge_demo
+add_executable(linear_regression_ridge_demo examples/linear_regression_ridge_demo.cpp)
+target_link_libraries(linear_regression_ridge_demo PRIVATE QuarkML)

@@ -7,10 +7,16 @@
 namespace ml::linear {
 
 /// A simple dense Linear Regression model (y = X w + b),
-/// trained by batch Gradient Descent. Provides save/load for reuse.
+/// trained by batch Gradient Descent. Now supports L2 (Ridge) regularization.
+/// Loss: (1/2n) * ||y - Xw - b||^2  +  (lambda/2) * ||w||^2
 class LinearRegression : public ml::core::SerializableModel {
 public:
-    LinearRegression(double lr = 0.01, int epochs = 1000, bool fit_intercept = true);
+    /// @param lr            learning rate for gradient descent
+    /// @param epochs        number of epochs
+    /// @param fit_intercept whether to use an intercept term b (not regularized)
+    /// @param l2_lambda     Ridge coefficient (lambda >= 0). 0 disables regularization.
+    LinearRegression(double lr = 0.01, int epochs = 1000, bool fit_intercept = true,
+                     double l2_lambda = 0.0);
 
     /// Train on features X (N x D) and targets y (N).
     void fit(const std::vector<std::vector<double>>& X,
@@ -24,11 +30,11 @@ public:
                  const std::vector<double>& y) const;
 
     /// Serialize parameters/metadata to a human-readable text file:
-    /// Example:
     ///   # QuarkML LinearRegression v1
     ///   n_features=3
     ///   fit_intercept=true
-    ///   bias=0.12345
+    ///   l2_lambda=0.1000000000
+    ///   bias=0.1234500000
     ///   weights=0.0100000000,-0.2200000000,1.3070000000
     void save(const std::string& path) const override;
 
@@ -42,6 +48,7 @@ public:
     double learning_rate() const { return lr_; }
     int epochs() const { return epochs_; }
     bool fit_intercept() const { return fit_intercept_; }
+    double l2_lambda() const { return l2_lambda_; }
 
 private:
     // parameters
@@ -52,6 +59,7 @@ private:
     double lr_{0.01};
     int epochs_{1000};
     bool fit_intercept_{true};
+    double l2_lambda_{0.0};  // NEW: Ridge coefficient
 
     // cached metadata
     int n_features_{0};
@@ -63,3 +71,4 @@ private:
 };
 
 } // namespace ml::linear
+

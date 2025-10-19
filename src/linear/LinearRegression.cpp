@@ -2,15 +2,16 @@
 
 #include <cmath>
 #include <fstream>
+#include <iomanip>   // for std::setprecision / std::fixed
 #include <stdexcept>
 #include <string>
-#include <iomanip>
+
 #include "ml/io/ModelIO.h"
 
 namespace ml::linear {
 
-LinearRegression::LinearRegression(double lr, int epochs, bool fit_intercept)
-    : lr_(lr), epochs_(epochs), fit_intercept_(fit_intercept) {}
+LinearRegression::LinearRegression(double lr, int epochs, bool fit_intercept, double l2_lambda)
+    : lr_(lr), epochs_(epochs), fit_intercept_(fit_intercept), l2_lambda_(l2_lambda) {}
 
 void LinearRegression::check_dimensions(const std::vector<std::vector<double>>& X,
                                         const std::vector<double>& y) {
@@ -21,7 +22,6 @@ void LinearRegression::check_dimensions(const std::vector<std::vector<double>>& 
     if (y.size() != n) throw std::invalid_argument("fit: y length != X rows");
     for (const auto& row : X) {
         if (row.size() != d) throw std::invalid_argument("fit: inconsistent row width in X");
-        // allow NaNs/Inf? For simplicity we don't check here.
     }
 }
 
@@ -41,7 +41,7 @@ void LinearRegression::fit(const std::vector<std::vector<double>>& X,
 
     n_features_ = static_cast<int>(d);
     weights_.assign(d, 0.0);
-    if (fit_intercept_) bias_ = 0.0; else bias_ = 0.0; // explicit
+    bias_ = 0.0;
 
     for (int ep = 0; ep < epochs_; ++ep) {
         std::vector<double> grad_w(d, 0.0);
@@ -57,8 +57,16 @@ void LinearRegression::fit(const std::vector<std::vector<double>>& X,
 
         // average gradients
         const double inv_n = 1.0 / static_cast<double>(n);
-        for (size_t j = 0; j < d; ++j) weights_[j] -= lr_ * (grad_w[j] * inv_n);
-        if (fit_intercept_) bias_ -= lr_ * (grad_b * inv_n);
+
+        // Ridge: add lambda * w_j to grad_w (bias is NOT regularized)
+        for (size_t j = 0; j < d; ++j) {
+            double reg = l2_lambda_ * weights_[j];
+            double grad = (grad_w[j] * inv_n) + reg;
+            weights_[j] -= lr_ * grad;
+        }
+        if (fit_intercept_) {
+            bias_ -= lr_ * (grad_b * inv_n);
+        }
     }
 }
 
@@ -107,7 +115,8 @@ void LinearRegression::save(const std::string& path) const {
     // # QuarkML LinearRegression v1
     // n_features=3
     // fit_intercept=true
-    // bias=0.12345
+    // l2_lambda=0.1000000000
+    // bias=0.1234500000
     // weights=0.0100000000,-0.2200000000,1.3070000000
     std::ofstream ofs(path, std::ios::out | std::ios::trunc);
     if (!ofs) throw std::runtime_error("LinearRegression::save: cannot open file: " + path);
@@ -116,6 +125,7 @@ void LinearRegression::save(const std::string& path) const {
     io::write_kv(ofs, "n_features", std::to_string(n_features_));
     io::write_kv(ofs, "fit_intercept", fit_intercept_ ? "true" : "false");
     ofs << std::setprecision(10) << std::fixed;
+    io::write_kv(ofs, "l2_lambda", std::to_string(l2_lambda_));
     io::write_kv(ofs, "bias", std::to_string(bias_));
     io::write_vec(ofs, "weights", weights_, /*precision=*/10);
     ofs.flush();
@@ -126,26 +136,21 @@ LinearRegression LinearRegression::load(const std::string& path) {
     std::ifstream ifs(path);
     if (!ifs) throw std::runtime_error("LinearRegression::load: cannot open file: " + path);
 
-    // We read the full file, ignoring the first header line (handled by parse_kv_file).
     auto kv = io::parse_kv_file(ifs);
 
-    auto it_nf = kv.find("n_features");
-    auto it_fit = kv.find("fit_intercept");
+    auto it_nf   = kv.find("n_features");
+    auto it_fit  = kv.find("fit_intercept");
     auto it_bias = kv.find("bias");
-    auto it_w = kv.find("weights");
+    auto it_w    = kv.find("weights");
 
     if (it_nf == kv.end() || it_fit == kv.end() || it_bias == kv.end() || it_w == kv.end()) {
         throw std::runtime_error("LinearRegression::load: missing required keys "
                                  "(n_features, fit_intercept, bias, weights)");
     }
 
-    // parse
     int n_features = 0;
-    try {
-        n_features = std::stoi(it_nf->second);
-    } catch (...) {
-        throw std::runtime_error("LinearRegression::load: invalid n_features: " + it_nf->second);
-    }
+    try { n_features = std::stoi(it_nf->second); }
+    catch (...) { throw std::runtime_error("LinearRegression::load: invalid n_features: " + it_nf->second); }
 
     bool fit_intercept = false;
     const std::string fit_str = it_fit->second;
@@ -171,13 +176,27 @@ LinearRegression LinearRegression::load(const std::string& path) {
                                  ") != n_features (" + std::to_string(n_features) + ")");
     }
 
-    LinearRegression model; // default hyperparameters; for inference they don't matter
-    model.weights_ = std::move(weights);
-    model.bias_ = bias;
-    model.fit_intercept_ = fit_intercept;
-    model.n_features_ = n_features;
+    // l2_lambda is optional (backward compatible). Default 0.0 if absent.
+    double l2_lambda = 0.0;
+    if (auto it_l2 = kv.find("l2_lambda"); it_l2 != kv.end()) {
+        try {
+            size_t idx = 0;
+            l2_lambda = std::stod(it_l2->second, &idx);
+            if (idx != it_l2->second.size())
+                throw std::runtime_error("trailing chars");
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string("LinearRegression::load: invalid l2_lambda: ")
+                                     + it_l2->second + " (" + e.what() + ")");
+        }
+    }
+
+    LinearRegression model(/*lr*/0.01, /*epochs*/1000, fit_intercept, l2_lambda);
+    model.weights_      = std::move(weights);
+    model.bias_         = bias;
+    model.n_features_   = n_features;
     return model;
 }
 
 } // namespace ml::linear
+
 
